@@ -323,6 +323,8 @@ pub struct Settings {
     /// The slim player bar: one row of small controls over a progress line
     /// that runs the width of the window.
     pub player_bar_compact: bool,
+    /// How see-through the main window's background is.
+    pub backdrop: crate::backdrop::Backdrop,
     /// How many frames a second the player bar's visualizer and the mini
     /// player's analyser draw; 0 is uncapped. MilkDrop has its own.
     pub visualizer_fps: u32,
@@ -518,6 +520,7 @@ impl Default for Settings {
             player_bar_vis_click: true,
             player_bar_height: crate::theme::PLAYER_BAR_HEIGHT,
             player_bar_compact: false,
+            backdrop: crate::backdrop::Backdrop::default(),
             visualizer_fps: crate::milkdrop::DEFAULT_FPS,
             volume: (u16::MAX as u32 * 70 / 100) as u16,
             sidebar_visible: true,

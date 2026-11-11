@@ -94,8 +94,8 @@ pub fn onboarding(app: &mut App, ui: &mut egui::Ui) {
                     ),
                 ),
             );
-            let top = super::blend(palette.window, palette.accent, 0.10);
-            super::widgets::paint_vertical_gradient(ui, rect, top, palette.window);
+            let (top, bottom) = super::wash(palette.window, palette.accent, 0.10);
+            super::widgets::paint_vertical_gradient(ui, rect, top, bottom);
             let width = CARD.min(rect.width() - 32.0);
             let margin: i8 = if width < CARD { 24 } else { 32 };
             egui::ScrollArea::vertical()

@@ -1241,7 +1241,9 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     let show_custom_titlebar = cfg!(target_os = "linux") || app.windows_controls_visible();
     let player_bar_vis = gettext(locale, "Player bar visualizer");
     let player_bar_vis_click = gettext(locale, "Click player bar to change visualizer");
+    let backdrop_title = gettext(locale, "Window background");
     let compact_bar = gettext(locale, "Compact player bar");
+    let omarchy = app.desktop.is_some();
     // Follow system's own light and dark palettes. Omarchy's palette already
     // follows the desktop, so they are offered only without it.
     let show_pair = app.settings.custom_theme.is_none()
@@ -1277,7 +1279,15 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             if !detail.is_empty() {
                 detail
             } else if app.custom_themes.follows_omarchy() {
-                gettext(locale, "Follow system uses your Omarchy colours.")
+                match omarchy_theme_name(ui.ctx()) {
+                    Some(name) => gettext(
+                        locale,
+                        "Follow system uses your Omarchy colours, from {theme}.",
+                    )
+                    .replace("{theme}", &name)
+                    .into(),
+                    None => gettext(locale, "Follow system uses your Omarchy colours."),
+                }
             } else {
                 gettext(
                     locale,
@@ -1357,6 +1367,8 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         ),
         pair_row(fastframe_theme::Base::Light),
         pair_row(fastframe_theme::Base::Dark),
+        RowText::new(backdrop_title.clone(), backdrop_detail(app, locale))
+            .when(cfg!(target_os = "linux")),
         RowText::new(
             compact_bar.clone(),
             gettext(
@@ -1388,7 +1400,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                             .settings
                             .custom_theme
                             .as_deref()
-                            .map(|filename| fastframe_theme::display_name(filename).into())
+                            .map(|filename| theme_label(ui.ctx(), filename))
                             .unwrap_or_else(|| app.settings.theme.label(locale));
                         let response = egui::ComboBox::from_id_salt("appearance_theme")
                             .selected_text(selected.as_ref())
@@ -1414,7 +1426,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                                         .selectable_label(
                                             app.settings.custom_theme.as_deref()
                                                 == Some(theme.filename.as_str()),
-                                            fastframe_theme::display_name(&theme.filename),
+                                            theme_label(ui.ctx(), &theme.filename).as_ref(),
                                         )
                                         .clicked()
                                     {
@@ -1477,6 +1489,18 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                     pair_picker(app, ui, base, &row.title);
                 });
             }
+            filtered_row(
+                ui,
+                &palette,
+                &needle,
+                &appearance,
+                &appearance_rows[13],
+                |ui| {
+                    if backdrop_picker(app, ui, omarchy, &backdrop_title) {
+                        changed = true;
+                    }
+                },
+            );
             filtered_row(
                 ui,
                 &palette,
@@ -1583,7 +1607,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 &palette,
                 &needle,
                 &appearance,
-                &appearance_rows[13],
+                &appearance_rows[14],
                 |ui| {
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = 8.0;
@@ -2790,6 +2814,99 @@ fn pair_picker(app: &mut App, ui: &mut egui::Ui, base: fastframe_theme::Base, na
         info.current_text_value = Some(selected.to_string());
         info
     });
+}
+
+/// The name of Omarchy's current theme, read at most every two seconds
+/// while Settings is open.
+fn omarchy_theme_name(ctx: &egui::Context) -> Option<String> {
+    #[cfg(target_os = "linux")]
+    {
+        let id = egui::Id::new("omarchy-theme-name");
+        let now = ctx.input(|input| input.time);
+        if let Some((at, name)) = ctx.data(|data| data.get_temp::<(f64, Option<String>)>(id))
+            && now - at < 2.0
+        {
+            return name;
+        }
+        let name = crate::backdrop::omarchy::theme_name();
+        ctx.data_mut(|data| data.insert_temp(id, (now, name.clone())));
+        name
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = ctx;
+        None
+    }
+}
+
+/// A palette file's name in the theme picker; the live Omarchy palette
+/// names the Omarchy theme it comes from.
+fn theme_label(ctx: &egui::Context, filename: &str) -> std::borrow::Cow<'static, str> {
+    if filename == fastframe_theme::omarchy::FILENAME {
+        return match omarchy_theme_name(ctx) {
+            Some(name) => format!("Omarchy ({name})").into(),
+            None => "Omarchy".into(),
+        };
+    }
+    fastframe_theme::display_name(filename).to_string().into()
+}
+
+/// What the Window background row says: what Follow Omarchy is showing,
+/// and where the blur comes from.
+fn backdrop_detail(app: &App, locale: crate::i18n::Locale) -> std::borrow::Cow<'static, str> {
+    use crate::backdrop::{Backdrop, Look};
+    let omarchy = app.desktop.is_some();
+    let mut text = if app.settings.backdrop == Backdrop::Auto && omarchy {
+        gettext(locale, "Follows Omarchy's window transparency, now {look}.")
+            .replace("{look}", app.look.label(locale).as_ref())
+    } else {
+        gettext(
+            locale,
+            "How much of the desktop shows through Spotifast. Words and icons stay solid.",
+        )
+        .into_owned()
+    };
+    if matches!(app.look, Look::Glassy) {
+        text.push(' ');
+        text.push_str(&gettext(
+            locale,
+            "The blur is Hyprland's, on while Omarchy's windows are Glassy.",
+        ));
+    }
+    text.into()
+}
+
+/// The Window background picker. Returns whether the choice changed.
+fn backdrop_picker(app: &mut App, ui: &mut egui::Ui, omarchy: bool, name: &str) -> bool {
+    use crate::backdrop::Backdrop;
+    let locale = app.locale;
+    let current = app.settings.backdrop;
+    let selected = current.label(locale, omarchy);
+    let mut changed = false;
+    let response = egui::ComboBox::from_id_salt("appearance_backdrop")
+        .selected_text(selected.as_ref())
+        .width(200.0_f32.min(ui.available_width()))
+        .show_ui(ui, |ui| {
+            for choice in Backdrop::ALL {
+                if choice == Backdrop::Opaque {
+                    ui.separator();
+                }
+                if ui
+                    .selectable_label(current == choice, choice.label(locale, omarchy).as_ref())
+                    .clicked()
+                    && current != choice
+                {
+                    app.settings.backdrop = choice;
+                    changed = true;
+                }
+            }
+        });
+    response.response.widget_info(|| {
+        let mut info = egui::WidgetInfo::labeled(egui::WidgetType::ComboBox, ui.is_enabled(), name);
+        info.current_text_value = Some(selected.to_string());
+        info
+    });
+    changed
 }
 
 fn language_picker(app: &mut App, ui: &mut egui::Ui) {

@@ -2530,7 +2530,7 @@ pub fn explicit_badge(ui: &mut Ui, palette: &Palette) {
         egui::Align2::CENTER_CENTER,
         "E",
         theme::bold(9.5),
-        palette.window,
+        crate::backdrop::solid(palette.window),
     );
 }
 

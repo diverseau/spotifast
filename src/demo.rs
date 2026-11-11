@@ -1228,6 +1228,11 @@ pub fn apply_flags(app: &mut App, page: Option<&str>, show: Option<&str>) {
             "compact-bar" => app.settings.player_bar_compact = true,
             "tall-bar" => app.settings.player_bar_height = crate::theme::PLAYER_BAR_MAX_HEIGHT,
             "short-bar" => app.settings.player_bar_height = crate::theme::PLAYER_BAR_MIN_HEIGHT,
+            // The window's backgrounds.
+            "opaque" => app.settings.backdrop = crate::backdrop::Backdrop::Opaque,
+            "transparent" => app.settings.backdrop = crate::backdrop::Backdrop::Transparent,
+            "glassy" => app.settings.backdrop = crate::backdrop::Backdrop::Glassy,
+            "clear" => app.settings.backdrop = crate::backdrop::Backdrop::Clear,
             // A palette file from the demo's own themes folder.
             palette if palette.starts_with("palette=") => {
                 app.settings.custom_theme = Some(palette["palette=".len()..].to_owned());

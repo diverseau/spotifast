@@ -65,8 +65,8 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, connecting: bool) {
                 rect
             };
             fastframe_titlebar::drag(ui, drag_rect);
-            let top = super::blend(palette.window, palette.accent, 0.10);
-            super::widgets::paint_vertical_gradient(ui, rect, top, palette.window);
+            let (top, bottom) = super::wash(palette.window, palette.accent, 0.10);
+            super::widgets::paint_vertical_gradient(ui, rect, top, bottom);
             let waiting = connecting || matches!(app.auth, AuthStatus::WaitingForBrowser { .. });
             let steps = !waiting && show_steps(app, &ctx);
             // Two columns share what the window has beside the card's

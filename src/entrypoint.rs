@@ -57,9 +57,9 @@ struct Cli {
     /// `library-list-narrow`, `library-list-wide`, `library-grid`, `library-grid-narrow`,
     /// `library-grid-wide`, `waiting-for-browser`, `sign-in-returning`, `sign-in-malformed`,
     /// `sign-in-shared-retired`, `sign-in-unknown-client`, `sign-in-not-allowed`,
-    /// `shared-grant`, `own-app`, `compact-bar`, `short-bar`, or `tall-bar`.
-    /// `palette=FILE` selects a palette from the demo's themes folder.
-    /// `wmp-skin=PATH` wears a Windows Media
+    /// `shared-grant`, `own-app`, `compact-bar`, `short-bar`, `tall-bar`, `opaque`,
+    /// `transparent`, `glassy`, or `clear`. `palette=FILE` selects a palette
+    /// from the demo's themes folder. `wmp-skin=PATH` wears a Windows Media
     /// Player skin, and `wmp-run=SCRIPT` runs script in it once it starts
     /// (`|` for a comma), to open a drawer or view for a capture.
     #[cfg(feature = "demo")]
@@ -907,6 +907,10 @@ fn native_options(
                 // Windows has no equivalent to macOS's floating traffic lights.
                 // Removing its decorations lets the app surface fill the window.
                 .with_decorations(main_window_decorated(fastframe_titlebar::enabled()))
+                // See-through on Linux, so the Transparent, Glassy and Clear
+                // backgrounds can show the desktop; an opaque palette still
+                // paints every pixel solid.
+                .with_transparent(cfg!(target_os = "linux"))
                 .with_inner_size(size)
                 .with_min_inner_size(inner_size.unwrap_or(spotifast::window::MAIN_MIN_SIZE))
                 .with_fullscreen(fullscreen);
@@ -1578,7 +1582,7 @@ impl eframe::App for Shell {
     /// The mini player's window is see-through where the skin leaves it
     /// out; the big window paints itself over eframe's own ground.
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
-        if self.app.settings.winamp_window {
+        if self.app.settings.winamp_window || cfg!(target_os = "linux") {
             [0.0; 4]
         } else {
             egui::Color32::from_rgba_unmultiplied(12, 12, 12, 180).to_normalized_gamma_f32()

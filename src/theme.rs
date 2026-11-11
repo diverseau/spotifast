@@ -703,7 +703,10 @@ pub fn circle_button(
         let offset = play_glyph_offset(icon, icon_size);
         let icon_rect =
             egui::Rect::from_center_size(rect.center() + offset, Vec2::splat(icon_size));
-        icon.image(icon_color, icon_size).paint_at(ui, icon_rect);
+        // The glyph is often the window's colour, which a Glassy window makes
+        // see-through; the disc under it never is.
+        icon.image(crate::backdrop::solid(icon_color), icon_size)
+            .paint_at(ui, icon_rect);
     }
     focus_ring(ui, &response);
     if tooltip.is_empty() {
@@ -736,7 +739,7 @@ pub fn circle_spinner(
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect).layout(
             egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
         ));
-        spinner(&mut child, diameter * 0.55, spin);
+        spinner(&mut child, diameter * 0.55, crate::backdrop::solid(spin));
     }
     if tooltip.is_empty() {
         response

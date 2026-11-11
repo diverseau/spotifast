@@ -105,6 +105,47 @@ pub fn bare_skin_windows() {
     });
 }
 
+/// Moves on whenever the main window's blur wanted changes.
+static BLUR_WANTED: AtomicU64 = AtomicU64::new(0);
+
+fn blur(address: &str, enabled: bool) -> String {
+    format!(
+        "/eval hl.dispatch(hl.dsp.window.set_prop({{ prop = \"no_blur\", value = \"{}\", \
+         window = \"address:{address}\" }}))",
+        if enabled { "0" } else { "1" }
+    )
+}
+
+/// Lets Hyprland blur what shows through the main window, or not: the
+/// Clear backdrop wants the desktop behind it sharp. Off the window's thread.
+pub fn set_main_window_blur(enabled: bool) {
+    if cfg!(test) {
+        return;
+    }
+    let Some(socket) = socket() else {
+        return;
+    };
+    let wanted = BLUR_WANTED.fetch_add(1, Ordering::Relaxed) + 1;
+    std::thread::spawn(move || {
+        // A new window takes a moment to reach the compositor's list; asking
+        // again later is harmless.
+        for wait in [Duration::ZERO, ATTEMPTS[1]] {
+            std::thread::sleep(wait);
+            if BLUR_WANTED.load(Ordering::Relaxed) != wanted {
+                return;
+            }
+            let Ok(clients) = request(&socket, "j/clients") else {
+                return;
+            };
+            for address in addresses(&clients, std::process::id()) {
+                if let Err(error) = request(&socket, &blur(&address, enabled)) {
+                    log::debug!("could not change the window's blur: {error}");
+                }
+            }
+        }
+    });
+}
+
 /// Stops any attempt under way: the next window is the main one.
 pub fn keep_borders() {
     WANTED.fetch_add(1, Ordering::Relaxed);

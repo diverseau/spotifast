@@ -75,7 +75,7 @@ fn fitted(room: Rect, size: [usize; 2]) -> Rect {
 fn paint_label(ui: &Ui, palette: &Palette, rect: Rect, label: &str, selected: bool) {
     let font = theme::medium(LABEL_SIZE);
     let color = if selected {
-        palette.window
+        crate::backdrop::solid(palette.window)
     } else {
         palette.text
     };

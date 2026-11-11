@@ -417,7 +417,7 @@ pub(super) fn show(app: &mut App, ui: &mut egui::Ui, data: &Prerelease) {
                     ui.add(egui::Label::new(
                         egui::RichText::new("E")
                             .font(theme::medium(9.0))
-                            .color(palette.window)
+                            .color(crate::backdrop::solid(palette.window))
                             .background_color(palette.secondary),
                     ));
                 }

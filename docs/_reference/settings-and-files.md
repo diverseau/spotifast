@@ -390,6 +390,7 @@ main fields are:
 | `player_bar_vis_click` | `true` | Allow clicks on empty player bar space to cycle visualizer modes |
 | `player_bar_height` | `88` | The player bar's height in points, from `68` to `140`. Drag the bar's top edge to change it; its cover, words and controls scale with it, and a tall bar adds the album under the artists |
 | `player_bar_compact` | `false` | The slim player bar: one row of small controls over a progress line along the bottom edge of the window. Drag the bar's top edge past its smallest size, or double-click the edge, to switch |
+| `backdrop` | `auto` | Linux: how much of the desktop shows through the window: `auto` (Omarchy's window transparency where Omarchy is set up, else opaque), `opaque`, `transparent`, `glassy` or `clear`. Words and icons stay solid. Hyprland blurs what shows through while its blur is on, which Omarchy's Glassy windows turn on; `clear` asks Hyprland not to blur Spotifast |
 | `visualizer_fps` | `60` | Frame rate of the player bar and mini player visualizers; `0` is uncapped. Half that out of focus, at most 30 while the system saves energy, none while the window is hidden. MilkDrop uses `milkdrop_fps` |
 | `library_sort` | `{}` | Per-section Library order overrides, since 0.8.0: `library`, `recently_played`, `name`, `recently_added`, `local`, or `spotify`, where supported |
 | `library_by_you` | `false` | Show only playlists owned by the signed-in account, alongside Liked Songs; applies only to the Playlists shelf |
@@ -481,9 +482,9 @@ and `--demo-show` adds surfaces on top of it: a comma separated list of
 `library-grid-wide`, `eq-user-presets`, `start-in-tray`, `rtl`, `player-bar-spectrum`, `player-bar-waveform`,
 `lyrics-fullscreen-view`, `lyrics-fullscreen-instrumental`, `signed-out`, `connecting`,
 `waiting-for-browser`, `sign-in-returning`, `sign-in-malformed`, `sign-in-shared-retired`,
-`sign-in-unknown-client`, `sign-in-not-allowed`, `shared-grant`, `own-app`, `compact-bar`, `short-bar`, `tall-bar`, and
-`palette=FILE`. The bar variants show the compact, shortest and tallest player bar, and `palette=FILE` selects a palette file
-from the demo's own `themes` folder. The Library variants show the list or cover grid with
+`sign-in-unknown-client`, `sign-in-not-allowed`, `shared-grant`, `own-app`, `compact-bar`, `short-bar`, `tall-bar`, `opaque`,
+`transparent`, `glassy`, `clear`, and `palette=FILE`. The bar variants show the compact, shortest and tallest player bar,
+the next four set the window background, and `palette=FILE` selects a palette file from the demo's own `themes` folder. The Library variants show the list or cover grid with
 a normal, narrow, or wide sidebar and collapsed artwork for matching captures.
 `shuffle-selected` and `shuffle-started` capture the selected-mode and
 playback-started outcomes of a collection Shuffle click. `update` shows a sample
@@ -689,6 +690,14 @@ without album art fade in a faint wash of the theme's `accent` at the top.
 Hovers and secondary text keep their blends. A template installed by an
 earlier version and never edited is upgraded on the next launch; an edited
 one is left alone.
+
+**Settings → Appearance → Window background** follows Omarchy's window
+transparency (`omarchy hyprland window transparency`) by default, within a
+second of a change: opaque windows draw Spotifast solid, transparent ones let
+a little of the desktop through, and glassy ones show it frosted, blurred by
+Hyprland. Choose **Opaque**, **Transparent**, **Glassy** or **Clear** to keep
+one of your own. Clear shows the desktop sharp behind Spotifast. The theme
+picker names the Omarchy theme the live palette comes from.
 
 Setup never replaces an existing template, hook or palette, and never changes
 your selected theme. Other users are set up independently when they launch the

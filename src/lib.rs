@@ -7,6 +7,7 @@ pub mod app;
 pub mod appearance;
 pub mod auth;
 pub mod autoscroll;
+pub mod backdrop;
 pub mod backend;
 pub mod bidi;
 pub mod cast;

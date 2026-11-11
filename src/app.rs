@@ -475,6 +475,15 @@ pub struct App {
     #[cfg(any(test, feature = "demo"))]
     pub demo_windows_controls: bool,
     applied_dark: Option<bool>,
+    /// Omarchy's window transparency, which the Auto backdrop follows.
+    desktop_look: crate::backdrop::DesktopLook,
+    /// How see-through the window is drawn this frame.
+    pub look: crate::backdrop::Look,
+    /// Omarchy's window look, `None` without Omarchy.
+    pub desktop: Option<crate::backdrop::Look>,
+    /// Whether Hyprland was asked to leave the main window unblurred (the
+    /// Clear look), so leaving it can ask again.
+    unblurred: bool,
     /// Reveals new colours from the middle of the window outwards.
     theme_transition: fastframe_theme::Transition,
     /// Whether colour changes are revealed. Tests that check which palette
@@ -1270,6 +1279,10 @@ impl App {
             #[cfg(any(test, feature = "demo"))]
             demo_windows_controls: false,
             applied_dark: None,
+            desktop_look: crate::backdrop::DesktopLook::default(),
+            look: crate::backdrop::Look::Opaque,
+            desktop: None,
+            unblurred: false,
             theme_transition: fastframe_theme::Transition::default(),
             reveal_theme_changes: true,
             auth: AuthStatus::Starting,
@@ -1569,6 +1582,8 @@ impl App {
         self.backend.art().forget_textures();
         ctx.set_theme(self.theme_preference());
         self.applied_dark = None;
+        // A new window starts blurred; the Clear look asks again.
+        self.unblurred = false;
         self.forget_skin_textures();
         #[cfg(target_os = "linux")]
         if self.settings.winamp_window {
@@ -5604,6 +5619,16 @@ impl App {
                 Palette::light()
             }
         });
+        // The mini player's skin paints its own window.
+        let look = if self.settings.winamp_window {
+            crate::backdrop::Look::Opaque
+        } else {
+            let desktop = self.desktop_look.current(ctx);
+            self.desktop = desktop;
+            self.settings.backdrop.resolve(desktop)
+        };
+        self.follow_look(look);
+        let palette = look.apply(palette);
         if self.applied_dark != Some(dark) || self.palette != palette {
             // The first colours need no reveal, and the mini player's window
             // is drawn by its skin.
@@ -5623,6 +5648,24 @@ impl App {
             self.applied_dark = Some(dark);
             self.accents.clear();
             self.accent_pending.clear();
+        }
+    }
+
+    /// Keeps Hyprland's blur in step with the look: Clear asks it to leave
+    /// the window unblurred, so what is behind stays sharp.
+    fn follow_look(&mut self, look: crate::backdrop::Look) {
+        self.look = look;
+        let unblurred = look == crate::backdrop::Look::Clear;
+        if self.settings.winamp_window {
+            // The skin's window has its own props; a new main window starts
+            // blurred again.
+            self.unblurred = false;
+            return;
+        }
+        if unblurred != self.unblurred {
+            self.unblurred = unblurred;
+            #[cfg(target_os = "linux")]
+            crate::hyprland::set_main_window_blur(!unblurred);
         }
     }
 

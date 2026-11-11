@@ -556,7 +556,7 @@ fn header_wash(
 ) -> Option<(Color32, Color32)> {
     if let Some(art) = art {
         let strength = if overview { 0.45 } else { 0.85 };
-        return Some((blend(palette.window, art, strength), palette.window));
+        return Some(wash(palette.window, art, strength));
     }
     (palette.tint.a() > 0).then_some((palette.tint, Color32::TRANSPARENT))
 }
@@ -692,12 +692,39 @@ fn caption_buttons(ui: &mut egui::Ui, palette: &theme::Palette, locale: crate::i
 }
 
 pub fn blend(base: Color32, tint: Color32, amount: f32) -> Color32 {
+    // A see-through background (a Glassy window) keeps its see-through.
+    if base.a() < 255 {
+        let alpha = f32::from(base.a()) / 255.0;
+        return crate::backdrop::fade(
+            blend(
+                crate::backdrop::solid(base),
+                crate::backdrop::solid(tint),
+                amount,
+            ),
+            alpha,
+        );
+    }
     let a = egui::Rgba::from(base);
     let b = egui::Rgba::from(tint);
     let mixed = a * (1.0 - amount) + b * amount;
     let mut color = Color32::from(mixed);
     color[3] = 255;
     color
+}
+
+/// The top and bottom of a gradient that washes `tint` into a page filled
+/// with `base`, by `amount` at the top and none at the bottom. Over a
+/// see-through page the wash carries the tint alone and fades out, so the
+/// page's colour is not laid twice into a band with a hard lower edge.
+pub fn wash(base: Color32, tint: Color32, amount: f32) -> (Color32, Color32) {
+    if base.a() == 255 {
+        (blend(base, tint, amount), base)
+    } else {
+        (
+            crate::backdrop::fade(crate::backdrop::solid(tint), amount),
+            Color32::TRANSPARENT,
+        )
+    }
 }
 
 fn toasts(app: &mut App, ctx: &egui::Context, bottom_offset: f32) {
