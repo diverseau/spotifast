@@ -239,7 +239,17 @@ pub const ROW_HEIGHT: f32 = 56.0;
 pub const COMPACT_ROW_HEIGHT: f32 = 48.0;
 /// The compact track list: one line, no cover.
 pub const THIN_ROW_HEIGHT: f32 = 36.0;
+/// The player bar's height until it is dragged.
 pub const PLAYER_BAR_HEIGHT: f32 = 88.0;
+/// The shortest and tallest the full player bar is dragged.
+pub const PLAYER_BAR_MIN_HEIGHT: f32 = 68.0;
+pub const PLAYER_BAR_MAX_HEIGHT: f32 = 140.0;
+/// The compact bar: one row of small controls over an edge-to-edge
+/// progress line.
+pub const PLAYER_BAR_COMPACT_HEIGHT: f32 = 48.0;
+/// How far a drag goes past the shortest full bar, doing nothing, before
+/// the bar snaps to compact; and as far again up out of compact.
+pub const PLAYER_BAR_SNAP: f32 = 32.0;
 /// The narrowest either right-hand panel goes. The queue and the lyrics
 /// take the same edge and swap places there, so a width that suits one
 /// has to suit the other, or the window would jump on the swap.
@@ -585,7 +595,21 @@ pub fn icon_button(
     hover: Color32,
     tooltip: &str,
 ) -> Response {
-    let edge = size + ICON_BUTTON_PAD;
+    icon_button_padded(ui, icon, size, ICON_BUTTON_PAD, color, hover, tooltip)
+}
+
+/// [`icon_button`] with `pad` points of target around the glyph, for bars
+/// that scale their controls.
+pub fn icon_button_padded(
+    ui: &mut egui::Ui,
+    icon: Icon,
+    size: f32,
+    pad: f32,
+    color: Color32,
+    hover: Color32,
+    tooltip: &str,
+) -> Response {
+    let edge = size + pad;
     let (rect, response) = ui.allocate_exact_size(Vec2::splat(edge), Sense::click());
     response.widget_info(|| {
         egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), tooltip)

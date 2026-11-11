@@ -388,6 +388,8 @@ main fields are:
 | `accent_from_art` | `true` | Tint pages with album art, and colour the player bar visualizer with the cover's colours |
 | `player_bar_vis` | `off` | Since 0.11.0: what moves behind the player bar while a song plays on this computer: `off`, `spectrum` or `waveform` |
 | `player_bar_vis_click` | `true` | Allow clicks on empty player bar space to cycle visualizer modes |
+| `player_bar_height` | `88` | The player bar's height in points, from `68` to `140`. Drag the bar's top edge to change it; its cover, words and controls scale with it, and a tall bar adds the album under the artists |
+| `player_bar_compact` | `false` | The slim player bar: one row of small controls over a progress line along the bottom edge of the window. Drag the bar's top edge past its smallest size, or double-click the edge, to switch |
 | `visualizer_fps` | `60` | Frame rate of the player bar and mini player visualizers; `0` is uncapped. Half that out of focus, at most 30 while the system saves energy, none while the window is hidden. MilkDrop uses `milkdrop_fps` |
 | `library_sort` | `{}` | Per-section Library order overrides, since 0.8.0: `library`, `recently_played`, `name`, `recently_added`, `local`, or `spotify`, where supported |
 | `library_by_you` | `false` | Show only playlists owned by the signed-in account, alongside Liked Songs; applies only to the Playlists shelf |
@@ -479,7 +481,9 @@ and `--demo-show` adds surfaces on top of it: a comma separated list of
 `library-grid-wide`, `eq-user-presets`, `start-in-tray`, `rtl`, `player-bar-spectrum`, `player-bar-waveform`,
 `lyrics-fullscreen-view`, `lyrics-fullscreen-instrumental`, `signed-out`, `connecting`,
 `waiting-for-browser`, `sign-in-returning`, `sign-in-malformed`, `sign-in-shared-retired`,
-`sign-in-unknown-client`, `sign-in-not-allowed`, `shared-grant`, and `own-app`. The Library variants show the list or cover grid with
+`sign-in-unknown-client`, `sign-in-not-allowed`, `shared-grant`, `own-app`, `compact-bar`, `short-bar`, `tall-bar`, and
+`palette=FILE`. The bar variants show the compact, shortest and tallest player bar, and `palette=FILE` selects a palette file
+from the demo's own `themes` folder. The Library variants show the list or cover grid with
 a normal, narrow, or wide sidebar and collapsed artwork for matching captures.
 `shuffle-selected` and `shuffle-started` capture the selected-mode and
 playback-started outcomes of a collection Shuffle click. `update` shows a sample

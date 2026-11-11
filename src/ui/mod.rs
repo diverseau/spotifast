@@ -76,7 +76,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         lyrics::immersive_click(app, ui);
         devices::popup(app, ctx);
         dialogs::show(app, ctx);
-        toasts(app, ctx, theme::PLAYER_BAR_HEIGHT + 16.0);
+        toasts(app, ctx, player_bar::height(app) + 16.0);
         return;
     }
     if titlebar_spans_window(cfg!(target_os = "macos"), fastframe_titlebar::enabled()) {
@@ -114,7 +114,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     dialogs::show(app, ctx);
     update::show(app, ctx);
     widgets::drag_ghost(ctx, &app.palette, app.locale);
-    toasts(app, ctx, theme::PLAYER_BAR_HEIGHT + 16.0);
+    toasts(app, ctx, player_bar::height(app) + 16.0);
     caption_buttons(ui, &app.palette, app.locale);
     fastframe_titlebar::resize(ui);
 }

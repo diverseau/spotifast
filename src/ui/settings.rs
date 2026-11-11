@@ -1241,6 +1241,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     let show_custom_titlebar = cfg!(target_os = "linux") || app.windows_controls_visible();
     let player_bar_vis = gettext(locale, "Player bar visualizer");
     let player_bar_vis_click = gettext(locale, "Click player bar to change visualizer");
+    let compact_bar = gettext(locale, "Compact player bar");
     // Follow system's own light and dark palettes. Omarchy's palette already
     // follows the desktop, so they are offered only without it.
     let show_pair = app.settings.custom_theme.is_none()
@@ -1356,6 +1357,13 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         ),
         pair_row(fastframe_theme::Base::Light),
         pair_row(fastframe_theme::Base::Dark),
+        RowText::new(
+            compact_bar.clone(),
+            gettext(
+                locale,
+                "Drag the player bar's top edge to resize it. Drag past its smallest size, or double-click the edge, for a slim bar with the progress along the bottom.",
+            ),
+        ),
     ];
     for index in [8, 9, 10] {
         appearance_rows[index].available &= visualizers;
@@ -1568,6 +1576,44 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                     {
                         changed = true;
                     }
+                },
+            );
+            filtered_row(
+                ui,
+                &palette,
+                &needle,
+                &appearance,
+                &appearance_rows[13],
+                |ui| {
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 8.0;
+                        if widgets::switch(
+                            ui,
+                            &palette,
+                            &compact_bar,
+                            &mut app.settings.player_bar_compact,
+                        )
+                        .changed()
+                        {
+                            changed = true;
+                        }
+                        let resized =
+                            (app.settings.player_bar_height - theme::PLAYER_BAR_HEIGHT).abs() > 0.5;
+                        if resized
+                            && theme::soft_button(
+                                ui,
+                                &palette,
+                                None,
+                                &gettext(locale, "Reset size"),
+                                false,
+                            )
+                            .clicked()
+                        {
+                            app.settings.player_bar_height = theme::PLAYER_BAR_HEIGHT;
+                            app.settings.player_bar_compact = false;
+                            changed = true;
+                        }
+                    });
                 },
             );
             filtered_row(

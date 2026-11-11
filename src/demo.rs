@@ -1224,6 +1224,15 @@ pub fn apply_flags(app: &mut App, page: Option<&str>, show: Option<&str>) {
                 };
                 app.friends = Loadable::Loaded(Vec::new());
             }
+            // The player bar's sizes.
+            "compact-bar" => app.settings.player_bar_compact = true,
+            "tall-bar" => app.settings.player_bar_height = crate::theme::PLAYER_BAR_MAX_HEIGHT,
+            "short-bar" => app.settings.player_bar_height = crate::theme::PLAYER_BAR_MIN_HEIGHT,
+            // A palette file from the demo's own themes folder.
+            palette if palette.starts_with("palette=") => {
+                app.settings.custom_theme = Some(palette["palette=".len()..].to_owned());
+                app.actions.push(Action::SettingsChanged);
+            }
             "soloist-audio" => {
                 app.soloist_audio = true;
                 app.settings.player_bar_vis = crate::settings::PlayerBarVis::Spectrum;

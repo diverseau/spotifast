@@ -3295,6 +3295,46 @@ pub fn thin_slider(
     wheel_step: Option<f32>,
 ) -> SliderEvent {
     let (_, rect) = ui.allocate_space(vec2(width, 16.0));
+    slider_at(
+        ui,
+        rect,
+        palette,
+        id,
+        label,
+        value,
+        wheel_step,
+        SliderLook::Thin {
+            bar: 4.0,
+            knob: 6.0,
+        },
+    )
+    .0
+}
+
+/// How a [`slider_at`] is drawn.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum SliderLook {
+    /// A rounded track through the middle of the rect, `bar` thick, with a
+    /// knob of radius `knob` while it is hovered or held.
+    Thin { bar: f32, knob: f32 },
+    /// A line along the rect's bottom edge, square at both ends, that
+    /// thickens while hovered or held: the compact player bar's progress.
+    Edge,
+}
+
+/// The slider behind [`thin_slider`], placed at `rect` and drawn as
+/// `look`. Also answers its response, for a tooltip.
+#[expect(clippy::too_many_arguments)]
+pub fn slider_at(
+    ui: &mut Ui,
+    rect: Rect,
+    palette: &Palette,
+    id: egui::Id,
+    label: &str,
+    value: f32,
+    wheel_step: Option<f32>,
+    look: SliderLook,
+) -> (SliderEvent, egui::Response) {
     let response = ui.interact(rect, id, Sense::click_and_drag());
     let dragging_value = ui.data(|data| data.get_temp::<f32>(id));
     let pointer_value = response
@@ -3386,25 +3426,54 @@ pub fn thin_slider(
             || response.has_focus()
             || response.dragged()
             || dragging_value.is_some();
-        let bar = Rect::from_center_size(rect.center(), vec2(rect.width(), 4.0));
         let track_color = if palette.dark {
             Color32::from_white_alpha(50)
         } else {
             Color32::from_black_alpha(40)
         };
-        ui.painter().rect_filled(bar, 2.0, track_color);
-        let filled = Rect::from_min_max(
-            bar.min,
-            pos2(bar.left() + bar.width() * shown.clamp(0.0, 1.0), bar.max.y),
-        );
-        let fill = if active { palette.accent } else { palette.text };
-        ui.painter().rect_filled(filled, 2.0, fill);
-        if active {
-            ui.painter()
-                .circle_filled(pos2(filled.right(), bar.center().y), 6.0, palette.text);
+        match look {
+            SliderLook::Thin { bar, knob } => {
+                let bar = Rect::from_center_size(rect.center(), vec2(rect.width(), bar));
+                let round = bar.height() / 2.0;
+                ui.painter().rect_filled(bar, round, track_color);
+                let filled = Rect::from_min_max(
+                    bar.min,
+                    pos2(bar.left() + bar.width() * shown.clamp(0.0, 1.0), bar.max.y),
+                );
+                let fill = if active { palette.accent } else { palette.text };
+                ui.painter().rect_filled(filled, round, fill);
+                if active {
+                    ui.painter().circle_filled(
+                        pos2(filled.right(), bar.center().y),
+                        knob,
+                        palette.text,
+                    );
+                }
+            }
+            SliderLook::Edge => {
+                let grow = ui.ctx().animate_bool_with_time(
+                    id.with("edge-grow"),
+                    active,
+                    crate::motion::seconds(ui.ctx(), 0.12),
+                );
+                let thickness = 3.0 + 3.0 * grow;
+                let bar =
+                    Rect::from_min_max(pos2(rect.left(), rect.bottom() - thickness), rect.max);
+                ui.painter().rect_filled(bar, 0.0, track_color);
+                let right = bar.left() + bar.width() * shown.clamp(0.0, 1.0);
+                let filled = Rect::from_min_max(bar.min, pos2(right, bar.max.y));
+                ui.painter().rect_filled(filled, 0.0, palette.accent);
+                if grow > 0.0 {
+                    // A bright tick where the song is, while it can be moved.
+                    let tick =
+                        Rect::from_center_size(pos2(right, bar.center().y), vec2(2.0, thickness));
+                    ui.painter()
+                        .rect_filled(tick, 0.0, palette.text.gamma_multiply(grow));
+                }
+            }
         }
     }
-    event
+    (event, response)
 }
 
 /// A tab-like chip row: returns the newly selected index, if any.

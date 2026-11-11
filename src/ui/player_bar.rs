@@ -9,7 +9,7 @@ use crate::player::RepeatMode;
 use crate::theme::{self, Icon};
 use crate::util;
 
-use super::widgets::{PlaylistChecks, SliderEvent, thin_slider};
+use super::widgets::{PlaylistChecks, SliderEvent};
 
 /// How much of the playing art's tint the bar's fill carries.
 const TINT_STRENGTH: f32 = 0.12;
@@ -45,21 +45,27 @@ pub(crate) fn end_tint_session(ctx: &egui::Context) {
 
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
     let palette = app.palette;
+    let height = shown_height(ui.ctx(), &app.settings);
+    let metrics = if app.settings.player_bar_compact {
+        Metrics::compact()
+    } else {
+        Metrics::full(height)
+    };
     let fill = eased_fill(ui.ctx(), palette.panel, app.now_playing_tint());
     egui::Panel::bottom("player-bar")
-        .exact_size(theme::PLAYER_BAR_HEIGHT)
+        .exact_size(height)
         .resizable(false)
         .show_separator_line(false)
         .frame(
             Frame::new()
                 .fill(fill)
-                .inner_margin(Margin::symmetric(16, 0)),
+                .inner_margin(Margin::symmetric(metrics.margin as i8, 0)),
         )
         .show(ui, |ui| {
             let rect = ui.max_rect();
             let now = app.now_playing();
             // The whole bar, margins included, behind everything else.
-            let behind = rect.expand2(vec2(16.0, 0.0));
+            let behind = rect.expand2(vec2(metrics.margin, 0.0));
             if visualizer(app, ui, behind, now.as_ref()) {
                 theme::visualiser_frame(ui.ctx(), app.visualiser_fps());
             }
@@ -92,32 +98,353 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 rect.top() + 0.5,
                 egui::Stroke::new(1.0, palette.outline),
             );
-            let width = rect.width();
-            let side = (width * 0.3).clamp(200.0, 420.0);
-            let cy = rect.center().y;
-            let left = Rect::from_min_max(rect.min, pos2(rect.left() + side, rect.bottom()));
+            // The compact bar's controls sit over its progress line.
+            let content = if metrics.compact {
+                Rect::from_min_max(rect.min, pos2(rect.right(), rect.bottom() - EDGE_THICKNESS))
+            } else {
+                rect
+            };
+            let width = content.width();
+            let side = if metrics.compact {
+                (width * 0.3).clamp(180.0, 400.0)
+            } else {
+                (width * 0.3).clamp(200.0, 420.0 * metrics.scale.max(1.0))
+            };
+            let cy = content.center().y;
+            let left =
+                Rect::from_min_max(content.min, pos2(content.left() + side, content.bottom()));
             let center = Rect::from_min_max(
-                pos2(rect.left() + side, rect.top()),
-                pos2(rect.right() - side, rect.bottom()),
+                pos2(content.left() + side, content.top()),
+                pos2(content.right() - side, content.bottom()),
             );
 
             // egui's cross-axis centring is unreliable across nested layouts of
             // mixed heights, so each region is placed in an explicit band that
             // is sized to its content and centred on the bar's midline.
-            now_playing_block(app, ui, left, now.as_ref());
+            now_playing_block(app, ui, left, now.as_ref(), &metrics);
 
-            transport(app, ui, now.as_ref(), center);
+            transport(app, ui, now.as_ref(), center, &metrics);
 
-            let right_band =
-                Rect::from_min_size(pos2(rect.right() - side, cy - 15.0), vec2(side, 30.0));
+            let band = 30.0 * metrics.scale;
+            let right_band = Rect::from_min_size(
+                pos2(content.right() - side, cy - band / 2.0),
+                vec2(side, band),
+            );
             let mut right_ui = ui.new_child(
                 UiBuilder::new()
                     .max_rect(right_band)
                     .layout(Layout::right_to_left(Align::Center)),
             );
-            let transport_right = center.center().x + transport_width() / 2.0;
-            extras(app, &mut right_ui, now.as_ref(), transport_right);
+            let transport_right = center.center().x + metrics.transport_width() / 2.0;
+            extras(app, &mut right_ui, now.as_ref(), transport_right, &metrics);
+            if metrics.compact {
+                edge_progress(app, ui, behind, now.as_ref());
+            }
+            resize_handle(app, ui, behind);
         });
+}
+
+/// The compact bar's progress line, along the window's bottom edge.
+const EDGE_THICKNESS: f32 = 3.0;
+/// How tall the line's target is: easier to catch than the line.
+const EDGE_TARGET: f32 = 10.0;
+const HEIGHT_ID: &str = "player-bar-height";
+const HANDLE_ID: &str = "player-bar-resize";
+/// How long the bar takes to settle into or out of compact.
+const SNAP_SECONDS: f32 = 0.2;
+
+/// The sizes of everything in the bar, from its height: words, covers and
+/// controls grow and shrink together, and their gaps with them.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Metrics {
+    compact: bool,
+    /// Words and icons against the 88-point bar.
+    scale: f32,
+    cover: f32,
+    cover_round: f32,
+    title: f32,
+    subtitle: f32,
+    /// Shuffle, repeat and the heart.
+    toggle_icon: f32,
+    skip_icon: f32,
+    /// The right-hand buttons.
+    extra_icon: f32,
+    /// The target around each icon.
+    pad: f32,
+    disc: f32,
+    gap: f32,
+    time: f32,
+    volume: f32,
+    spacing: f32,
+    margin: f32,
+}
+
+impl Metrics {
+    fn full(height: f32) -> Self {
+        let height = height.clamp(theme::PLAYER_BAR_MIN_HEIGHT, theme::PLAYER_BAR_MAX_HEIGHT);
+        let scale = if height >= theme::PLAYER_BAR_HEIGHT {
+            1.0 + (height - theme::PLAYER_BAR_HEIGHT) * 0.006
+        } else {
+            1.0 - (theme::PLAYER_BAR_HEIGHT - height) * 0.0065
+        };
+        Self {
+            compact: false,
+            scale,
+            cover: (height - 32.0).clamp(40.0, 108.0),
+            cover_round: 6.0 * scale,
+            title: 14.0 * scale,
+            subtitle: 12.0 * scale,
+            toggle_icon: 17.0 * scale,
+            skip_icon: 18.0 * scale,
+            extra_icon: 18.0 * scale.min(1.15),
+            pad: theme::ICON_BUTTON_PAD * scale,
+            disc: 36.0 * scale,
+            gap: TRANSPORT_GAP * scale,
+            time: 11.5 * scale.min(1.15),
+            volume: 92.0 * scale.min(1.2),
+            spacing: 6.0 * scale,
+            margin: 16.0,
+        }
+    }
+
+    fn compact() -> Self {
+        Self {
+            compact: true,
+            scale: 0.85,
+            cover: 32.0,
+            cover_round: 4.0,
+            title: 13.0,
+            subtitle: 11.0,
+            toggle_icon: 15.0,
+            skip_icon: 15.0,
+            extra_icon: 16.0,
+            pad: 9.0,
+            disc: 28.0,
+            gap: 6.0,
+            time: 11.0,
+            volume: 72.0,
+            spacing: 4.0,
+            margin: 12.0,
+        }
+    }
+
+    /// The transport's button widths: icon buttons occupy the icon and its
+    /// pad; the disc is its diameter.
+    fn transport_widths(&self) -> [f32; 5] {
+        let toggle = self.toggle_icon + self.pad;
+        let skip = self.skip_icon + self.pad;
+        [toggle, skip, self.disc, skip, toggle]
+    }
+
+    /// The transport's buttons from Shuffle to Repeat, centred in the bar.
+    fn transport_width(&self) -> f32 {
+        self.transport_widths().iter().sum::<f32>() + self.gap * 4.0
+    }
+
+    fn extra_button(&self) -> f32 {
+        self.extra_icon + self.pad
+    }
+
+    /// What the right of the bar always holds: the volume slider and its
+    /// button, the devices, queue and lyrics buttons, and the gaps.
+    fn extras_width(&self) -> f32 {
+        self.volume + 4.0 * self.extra_button() + 4.0 * self.spacing + 4.0
+    }
+
+    /// Whether the full screen button has room beside the rest, keeping
+    /// clear of the transport, with `room` points to the right of it.
+    fn full_screen_button_fits(&self, room: f32) -> bool {
+        room >= self.extras_width() + self.extra_button() + self.spacing + self.gap
+    }
+
+    /// A thin slider sized for the bar.
+    fn slider_look(&self) -> super::widgets::SliderLook {
+        super::widgets::SliderLook::Thin {
+            bar: (4.0 * self.scale).clamp(3.0, 5.0),
+            knob: (6.0 * self.scale).clamp(5.0, 7.5),
+        }
+    }
+}
+
+/// The height the settings ask for: the dragged height, or compact.
+fn target_height(settings: &crate::settings::Settings) -> f32 {
+    if settings.player_bar_compact {
+        theme::PLAYER_BAR_COMPACT_HEIGHT
+    } else {
+        settings
+            .player_bar_height
+            .clamp(theme::PLAYER_BAR_MIN_HEIGHT, theme::PLAYER_BAR_MAX_HEIGHT)
+    }
+}
+
+/// How much of the window's foot the bar takes, for what floats over it.
+pub(crate) fn height(app: &App) -> f32 {
+    target_height(&app.settings)
+}
+
+/// The height to draw this frame. A drag moves the bar with the pointer;
+/// a snap into or out of compact, or a double-click, eases there.
+fn shown_height(ctx: &egui::Context, settings: &crate::settings::Settings) -> f32 {
+    let id = egui::Id::new(HEIGHT_ID);
+    let live = ctx
+        .data(|data| data.get_temp::<bool>(id.with("live")))
+        .unwrap_or(false);
+    let time = if live {
+        0.0
+    } else {
+        crate::motion::seconds(ctx, SNAP_SECONDS)
+    };
+    ctx.animate_value_with_time(id, target_height(settings), time)
+}
+
+/// Where a drag of the top edge to `wanted` points tall leaves the bar:
+/// compact or not, and the full bar's height. The full bar stops at its
+/// shortest, and only a further [`theme::PLAYER_BAR_SNAP`] points of drag
+/// turn it compact; as far again up past compact brings it back.
+fn drag_to(compact: bool, wanted: f32) -> (bool, f32) {
+    let full = wanted.clamp(theme::PLAYER_BAR_MIN_HEIGHT, theme::PLAYER_BAR_MAX_HEIGHT);
+    if compact {
+        let out = wanted > theme::PLAYER_BAR_COMPACT_HEIGHT + theme::PLAYER_BAR_SNAP;
+        (!out, full)
+    } else {
+        let into = wanted < theme::PLAYER_BAR_MIN_HEIGHT - theme::PLAYER_BAR_SNAP;
+        (into, full)
+    }
+}
+
+/// The bar's top edge: drag it to resize the bar, past its shortest to make
+/// it compact, and double-click it to switch between compact and full.
+fn resize_handle(app: &mut App, ui: &mut egui::Ui, bar: Rect) {
+    let ctx = ui.ctx().clone();
+    let id = egui::Id::new(HANDLE_ID);
+    let live_id = egui::Id::new(HEIGHT_ID).with("live");
+    let start_id = id.with("start");
+    let snapped_id = id.with("snapped");
+    let grip = Rect::from_min_max(
+        pos2(bar.left(), bar.top() - 2.0),
+        pos2(bar.right(), bar.top() + 5.0),
+    );
+    let response = ui
+        .interact(grip, id, Sense::click_and_drag())
+        .on_hover_cursor(egui::CursorIcon::ResizeVertical);
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(
+            egui::WidgetType::Other,
+            true,
+            gettext(app.locale, "Player bar size"),
+        )
+    });
+    let now = ctx.input(|input| input.time);
+    let snap = |ctx: &egui::Context| ctx.data_mut(|data| data.insert_temp(snapped_id, now));
+    if response.drag_started() {
+        let pointer = response
+            .interact_pointer_pos()
+            .map_or(bar.top(), |pos| pos.y);
+        // The full height it started from comes back if it goes compact.
+        ctx.data_mut(|data| {
+            data.insert_temp(
+                start_id,
+                (
+                    pointer,
+                    target_height(&app.settings),
+                    app.settings.player_bar_height,
+                ),
+            );
+        });
+    }
+    if response.dragged()
+        && let Some((start, from, full)) =
+            ctx.data(|data| data.get_temp::<(f32, f32, f32)>(start_id))
+        && let Some(pointer) = ctx.pointer_interact_pos()
+    {
+        let wanted = from + (start - pointer.y);
+        let (compact, height) = drag_to(app.settings.player_bar_compact, wanted);
+        if compact != app.settings.player_bar_compact {
+            snap(&ctx);
+            app.settings.player_bar_compact = compact;
+        }
+        app.settings.player_bar_height = if compact { full } else { height };
+    }
+    if response.drag_stopped() {
+        ctx.data_mut(|data| data.remove::<(f32, f32, f32)>(start_id));
+        app.actions.push(Action::SettingsChanged);
+    }
+    if response.double_clicked() {
+        snap(&ctx);
+        app.settings.player_bar_compact = !app.settings.player_bar_compact;
+        app.actions.push(Action::SettingsChanged);
+    }
+    // While held, the bar follows the pointer, except just after a snap,
+    // which eases.
+    let snapped_at = ctx
+        .data(|data| data.get_temp::<f64>(snapped_id))
+        .unwrap_or(f64::NEG_INFINITY);
+    let easing = now - snapped_at < f64::from(SNAP_SECONDS);
+    ctx.data_mut(|data| data.insert_temp(live_id, response.dragged() && !easing));
+    if easing {
+        ctx.request_repaint();
+    }
+
+    let shown = ctx.animate_bool_with_time(
+        id.with("shown"),
+        response.hovered() || response.dragged(),
+        crate::motion::seconds(&ctx, 0.12),
+    );
+    if shown > 0.0 {
+        let palette = app.palette;
+        ui.painter().hline(
+            bar.x_range(),
+            bar.top() + 0.5,
+            egui::Stroke::new(1.0, palette.accent.gamma_multiply(shown)),
+        );
+        let pill = Rect::from_center_size(pos2(bar.center().x, bar.top() + 3.0), vec2(36.0, 4.0));
+        ui.painter()
+            .rect_filled(pill, 2.0, palette.secondary.gamma_multiply(shown));
+    }
+}
+
+/// The compact bar's progress: a line the width of the window along its
+/// bottom edge, which thickens under the pointer and seeks like the full
+/// bar's slider.
+fn edge_progress(app: &mut App, ui: &mut egui::Ui, bar: Rect, now: Option<&NowPlaying>) {
+    let palette = app.palette;
+    let (position, duration) = now
+        .map(|now| (now.position_ms, now.duration_ms))
+        .unwrap_or((0, 0));
+    let fraction = match app.seek_preview {
+        Some(fraction) => fraction,
+        None if duration > 0 => position as f32 / duration as f32,
+        None => 0.0,
+    };
+    let rect = Rect::from_min_max(pos2(bar.left(), bar.bottom() - EDGE_TARGET), bar.max);
+    let (event, response) = super::widgets::slider_at(
+        ui,
+        rect,
+        &palette,
+        egui::Id::new("seek-slider"),
+        &gettext(app.locale, "Playback position (%)"),
+        fraction,
+        None,
+        super::widgets::SliderLook::Edge,
+    );
+    match event {
+        SliderEvent::Dragging(value) => app.seek_preview = Some(value),
+        SliderEvent::Committed(value) => {
+            app.seek_preview = None;
+            if duration > 0 {
+                app.actions
+                    .push(Action::Seek((value * duration as f32) as u32));
+            }
+        }
+        SliderEvent::None => {}
+    }
+    // Where a click would go, as the full bar's times say.
+    if duration > 0
+        && let Some(pointer) = response.hover_pos()
+    {
+        let at = ((pointer.x - rect.left()) / rect.width()).clamp(0.0, 1.0);
+        response.on_hover_text_at_pointer(util::format_duration_ms((at * duration as f32) as u32));
+    }
 }
 
 /// Draws the chosen spectrum or waveform of the song playing on this
@@ -417,34 +744,57 @@ fn eased_fill(ctx: &egui::Context, panel: Color32, tint: Option<Color32>) -> Col
     }
 }
 
-fn now_playing_block(app: &mut App, ui: &mut egui::Ui, region: Rect, now: Option<&NowPlaying>) {
+fn now_playing_block(
+    app: &mut App,
+    ui: &mut egui::Ui,
+    region: Rect,
+    now: Option<&NowPlaying>,
+    metrics: &Metrics,
+) {
     let palette = app.palette;
     let cy = region.center().y;
-    let cover_rect = Rect::from_min_size(pos2(region.left() + 4.0, cy - 28.0), Vec2::splat(56.0));
+    let s = metrics.scale;
+    let cover_left = if metrics.compact { 0.0 } else { 4.0 };
+    let cover_rect = Rect::from_min_size(
+        pos2(region.left() + cover_left, cy - metrics.cover / 2.0),
+        Vec2::splat(metrics.cover),
+    );
+    // Room for a line of text in each font, and the gap between lines.
+    let line = |size: f32| size * 1.3;
+    let line_gap = (2.0 * s).round();
 
     let Some(now) = now else {
-        super::widgets::paint_cover(ui, &palette, None, cover_rect, 6.0, Icon::Music, None);
-        let text_left = cover_rect.right() + 12.0;
+        super::widgets::paint_cover(
+            ui,
+            &palette,
+            None,
+            cover_rect,
+            metrics.cover_round,
+            Icon::Music,
+            None,
+        );
+        let text_left = cover_rect.right() + 12.0 * s;
+        let text_height = line(metrics.title) + line(metrics.subtitle) + line_gap;
         let text_rect = Rect::from_min_size(
-            pos2(text_left, cy - 17.0),
-            vec2((region.right() - text_left - 8.0).max(40.0), 34.0),
+            pos2(text_left, cy - text_height / 2.0),
+            vec2((region.right() - text_left - 8.0).max(40.0), text_height),
         );
         let mut text_ui = ui.new_child(
             UiBuilder::new()
                 .max_rect(text_rect)
                 .layout(Layout::top_down(Align::Min)),
         );
-        text_ui.spacing_mut().item_spacing.y = 2.0;
+        text_ui.spacing_mut().item_spacing.y = line_gap;
         theme::text(
             &mut text_ui,
             gettext(app.locale, "Nothing playing"),
-            theme::medium(14.0),
+            theme::medium(metrics.title),
             palette.secondary,
         );
         theme::text(
             &mut text_ui,
             gettext(app.locale, "Pick a song, album, or playlist"),
-            theme::regular(12.0),
+            theme::regular(metrics.subtitle),
             palette.dim,
         );
         return;
@@ -457,7 +807,7 @@ fn now_playing_block(app: &mut App, ui: &mut egui::Ui, region: Rect, now: Option
         "player-bar",
         app.small_art(now, cover_rect.width()),
         cover_rect,
-        6.0,
+        metrics.cover_round,
     );
     let song = app.now_playing_item();
     let drag_sense = if song.is_some() {
@@ -479,7 +829,10 @@ fn now_playing_block(app: &mut App, ui: &mut egui::Ui, region: Rect, now: Option
         pos2(cover_rect.right() - 10.0, cover_rect.top() + 10.0),
         Vec2::splat(18.0),
     );
-    let offer_expand = art_available && !app.settings.art_expanded && app.settings.sidebar_visible;
+    let offer_expand = art_available
+        && !app.settings.art_expanded
+        && app.settings.sidebar_visible
+        && !metrics.compact;
     let over_expand = offer_expand && ui.rect_contains_pointer(expand_rect);
     if cover_response.clicked() && !over_expand {
         if let Some(id) = &now.album_id {
@@ -505,21 +858,55 @@ fn now_playing_block(app: &mut App, ui: &mut egui::Ui, region: Rect, now: Option
             app.actions.push(Action::SettingsChanged);
         }
     }
-    let heart_width = if now.is_episode { 0.0 } else { 42.0 };
-    let text_left = cover_rect.right() + 12.0;
+    let heart_button = metrics.toggle_icon + metrics.pad;
+    let heart_width = if now.is_episode {
+        0.0
+    } else {
+        heart_button + 13.0 * s
+    };
+    let text_left = cover_rect.right() + if metrics.compact { 10.0 } else { 12.0 * s };
     let text_width = (region.right() - text_left - heart_width).max(40.0);
+    // A tall bar has room for the album under the artists.
+    let album = (!metrics.compact
+        && !now.is_episode
+        && metrics.cover >= 80.0
+        && !now.album_name.is_empty()
+        && now.album_name != now.title)
+        .then_some(now.album_name.as_str());
     let displayed_text_width: f32 = {
-        let title =
-            ui.painter()
-                .layout_no_wrap(now.title.clone(), theme::medium(14.0), palette.text);
+        let title = ui.painter().layout_no_wrap(
+            now.title.clone(),
+            theme::medium(metrics.title),
+            palette.text,
+        );
         let subtitle = ui.painter().layout_no_wrap(
             now.subtitle.clone(),
-            theme::regular(12.0),
+            theme::regular(metrics.subtitle),
             palette.secondary,
         );
-        title.size().x.max(subtitle.size().x).min(text_width)
+        let album = album.map_or(0.0, |album| {
+            ui.painter()
+                .layout_no_wrap(
+                    album.to_owned(),
+                    theme::regular(metrics.subtitle),
+                    palette.dim,
+                )
+                .size()
+                .x
+        });
+        title
+            .size()
+            .x
+            .max(subtitle.size().x)
+            .max(album)
+            .min(text_width)
     };
-    let info_rect = Rect::from_min_size(pos2(text_left, cy - 18.0), vec2(text_width, 36.0));
+    let lines = if album.is_some() { 2.0 } else { 1.0 };
+    let info_height = line(metrics.title) + lines * (line(metrics.subtitle) + line_gap);
+    let info_rect = Rect::from_min_size(
+        pos2(text_left, cy - info_height / 2.0),
+        vec2(text_width, info_height),
+    );
 
     let mut text_ui = ui.new_child(
         UiBuilder::new()
@@ -527,9 +914,14 @@ fn now_playing_block(app: &mut App, ui: &mut egui::Ui, region: Rect, now: Option
             .layout(Layout::top_down(Align::Min)),
     );
     text_ui.set_clip_rect(info_rect.intersect(ui.clip_rect()));
-    text_ui.spacing_mut().item_spacing.y = 2.0;
-    let title_response = theme::link(&mut text_ui, &now.title, theme::medium(14.0), palette.text)
-        .interact(drag_sense);
+    text_ui.spacing_mut().item_spacing.y = line_gap;
+    let title_response = theme::link(
+        &mut text_ui,
+        &now.title,
+        theme::medium(metrics.title),
+        palette.text,
+    )
+    .interact(drag_sense);
     if title_response.clicked() {
         if let Some(id) = &now.album_id {
             app.actions.push(Action::Open(Page::Album(id.clone())));
@@ -540,8 +932,13 @@ fn now_playing_block(app: &mut App, ui: &mut egui::Ui, region: Rect, now: Option
     let mut responses = vec![cover_response, title_response];
     text_ui.horizontal_top(|ui| {
         if now.artists.is_empty() {
-            let response = theme::link(ui, &now.subtitle, theme::regular(12.0), palette.secondary)
-                .interact(drag_sense);
+            let response = theme::link(
+                ui,
+                &now.subtitle,
+                theme::regular(metrics.subtitle),
+                palette.secondary,
+            )
+            .interact(drag_sense);
             if response.clicked()
                 && let Some(id) = &now.show_id
             {
@@ -552,12 +949,18 @@ fn now_playing_block(app: &mut App, ui: &mut egui::Ui, region: Rect, now: Option
             ui.spacing_mut().item_spacing.x = 0.0;
             for (index, artist) in now.artists.iter().enumerate() {
                 if index > 0 {
-                    theme::text(ui, ", ", theme::regular(12.0), palette.secondary);
+                    theme::text(
+                        ui,
+                        ", ",
+                        theme::regular(metrics.subtitle),
+                        palette.secondary,
+                    );
                 }
+                let font = theme::regular(metrics.subtitle);
                 let response = if artist.id.is_some() {
-                    theme::link(ui, &artist.name, theme::regular(12.0), palette.secondary)
+                    theme::link(ui, &artist.name, font, palette.secondary)
                 } else {
-                    theme::text(ui, &artist.name, theme::regular(12.0), palette.secondary)
+                    theme::text(ui, &artist.name, font, palette.secondary)
                 }
                 .interact(drag_sense);
                 if response.clicked()
@@ -569,6 +972,21 @@ fn now_playing_block(app: &mut App, ui: &mut egui::Ui, region: Rect, now: Option
             }
         }
     });
+    if let Some(album) = album {
+        let response = theme::link(
+            &mut text_ui,
+            album,
+            theme::regular(metrics.subtitle),
+            palette.dim,
+        )
+        .interact(drag_sense);
+        if response.clicked()
+            && let Some(id) = &now.album_id
+        {
+            app.actions.push(Action::Open(Page::Album(id.clone())));
+        }
+        responses.push(response);
+    }
     if responses
         .iter()
         .any(|response| response.drag_started_by(egui::PointerButton::Primary))
@@ -617,14 +1035,23 @@ fn now_playing_block(app: &mut App, ui: &mut egui::Ui, region: Rect, now: Option
         };
         // Sit the heart just past the actual text, not at the region's far
         // edge, so it stays visually attached to the title.
-        let heart_x = (text_left + displayed_text_width + 21.0).min(region.right() - 21.0);
-        let heart_rect = Rect::from_center_size(pos2(heart_x, cy), Vec2::splat(30.0));
+        let reach = heart_width / 2.0;
+        let heart_x = (text_left + displayed_text_width + reach).min(region.right() - reach);
+        let heart_rect = Rect::from_center_size(pos2(heart_x, cy), Vec2::splat(heart_button));
         let mut heart_ui = ui.new_child(
             UiBuilder::new()
                 .max_rect(heart_rect)
                 .layout(Layout::centered_and_justified(egui::Direction::LeftToRight)),
         );
-        let response = theme::icon_button(&mut heart_ui, icon, 17.0, color, hover, &tooltip);
+        let response = theme::icon_button_padded(
+            &mut heart_ui,
+            icon,
+            metrics.toggle_icon,
+            metrics.pad,
+            color,
+            hover,
+            &tooltip,
+        );
         let popup_id = egui::Id::new(LIKED_POPUP_ID);
         let query_id = popup_id.with("query");
         let checks_id = popup_id.with("checks");
@@ -702,18 +1129,18 @@ fn now_playing_block(app: &mut App, ui: &mut egui::Ui, region: Rect, now: Option
     }
 }
 
-/// The transport's button widths: icon buttons occupy icon size + 12; the
-/// disc is 36.
-const TRANSPORT_WIDTHS: [f32; 5] = [29.0, 30.0, 36.0, 30.0, 29.0];
+/// The gap between the transport's buttons in the 88-point bar.
 const TRANSPORT_GAP: f32 = 10.0;
 
-/// The transport's buttons from Shuffle to Repeat, centred in the bar.
-fn transport_width() -> f32 {
-    TRANSPORT_WIDTHS.iter().sum::<f32>() + TRANSPORT_GAP * 4.0
-}
-
-fn transport(app: &mut App, ui: &mut egui::Ui, now: Option<&NowPlaying>, region: Rect) {
+fn transport(
+    app: &mut App,
+    ui: &mut egui::Ui,
+    now: Option<&NowPlaying>,
+    region: Rect,
+    metrics: &Metrics,
+) {
     let palette = app.palette;
+    let s = metrics.scale;
     // Everything here is placed with explicit rects: egui's implicit rows
     // centre each widget in the row height known when it is added, which
     // left earlier icons riding high next to the play disc.
@@ -723,7 +1150,13 @@ fn transport(app: &mut App, ui: &mut egui::Ui, now: Option<&NowPlaying>, region:
     // above the bar's midline and the progress row 23px below it. Measured
     // on screen this puts equal breathing room above and beneath the
     // cluster.
-    let cy = region.center().y - 8.0;
+    //
+    // The compact bar has no progress row: its buttons sit on the midline.
+    let cy = if metrics.compact {
+        region.center().y
+    } else {
+        region.center().y - 8.0 * s
+    };
     let enabled = now.is_some_and(|now| now.can_control) || app.is_connected();
     let playing = now.is_some_and(|now| now.playing);
     let loading = now.is_some_and(|now| now.loading);
@@ -735,11 +1168,11 @@ fn transport(app: &mut App, ui: &mut egui::Ui, now: Option<&NowPlaying>, region:
         palette.dim
     };
 
-    let widths = TRANSPORT_WIDTHS;
-    let mut x = region.center().x - transport_width() / 2.0;
+    let widths = metrics.transport_widths();
+    let mut x = region.center().x - metrics.transport_width() / 2.0;
     let mut slot = |width: f32| {
-        let rect = Rect::from_center_size(pos2(x + width / 2.0, cy), vec2(width, 36.0));
-        x += width + TRANSPORT_GAP;
+        let rect = Rect::from_center_size(pos2(x + width / 2.0, cy), vec2(width, metrics.disc));
+        x += width + metrics.gap;
         rect
     };
     let centered = |ui: &mut egui::Ui, rect: Rect| {
@@ -752,10 +1185,11 @@ fn transport(app: &mut App, ui: &mut egui::Ui, now: Option<&NowPlaying>, region:
 
     let shuffle_color = if shuffle { palette.accent } else { dim };
     let mut cell = centered(ui, slot(widths[0]));
-    let shuffle_button = theme::icon_button(
+    let shuffle_button = theme::icon_button_padded(
         &mut cell,
         Icon::Shuffle,
-        17.0,
+        metrics.toggle_icon,
+        metrics.pad,
         shuffle_color,
         if shuffle {
             palette.accent_hover
@@ -777,10 +1211,11 @@ fn transport(app: &mut App, ui: &mut egui::Ui, now: Option<&NowPlaying>, region:
     }
 
     let mut cell = centered(ui, slot(widths[1]));
-    if theme::icon_button(
+    if theme::icon_button_padded(
         &mut cell,
         Icon::SkipBackFilled,
-        18.0,
+        metrics.skip_icon,
+        metrics.pad,
         dim,
         palette.text,
         &gettext(app.locale, "Previous"),
@@ -795,7 +1230,7 @@ fn transport(app: &mut App, ui: &mut egui::Ui, now: Option<&NowPlaying>, region:
         let mut cell = centered(ui, disc);
         theme::circle_spinner(
             &mut cell,
-            36.0,
+            metrics.disc,
             palette.text,
             palette.window,
             &gettext(app.locale, "Loading…"),
@@ -815,7 +1250,7 @@ fn transport(app: &mut App, ui: &mut egui::Ui, now: Option<&NowPlaying>, region:
         if theme::circle_button(
             &mut cell,
             icon,
-            36.0,
+            metrics.disc,
             palette.text,
             hover,
             palette.window,
@@ -832,10 +1267,11 @@ fn transport(app: &mut App, ui: &mut egui::Ui, now: Option<&NowPlaying>, region:
     }
 
     let mut cell = centered(ui, slot(widths[3]));
-    if theme::icon_button(
+    if theme::icon_button_padded(
         &mut cell,
         Icon::SkipForwardFilled,
-        18.0,
+        metrics.skip_icon,
+        metrics.pad,
         dim,
         palette.text,
         &gettext(app.locale, "Next"),
@@ -859,10 +1295,11 @@ fn transport(app: &mut App, ui: &mut egui::Ui, now: Option<&NowPlaying>, region:
         ),
     };
     let mut cell = centered(ui, slot(widths[4]));
-    if theme::icon_button(
+    if theme::icon_button_padded(
         &mut cell,
         repeat_icon,
-        17.0,
+        metrics.toggle_icon,
+        metrics.pad,
         repeat_color,
         if repeat == RepeatMode::Off {
             palette.text
@@ -876,10 +1313,14 @@ fn transport(app: &mut App, ui: &mut egui::Ui, now: Option<&NowPlaying>, region:
         app.actions.push(Action::CycleRepeat);
     }
 
+    // The compact bar's progress runs along its foot instead.
+    if metrics.compact {
+        return;
+    }
     // Progress row, just below the buttons (disc bottom + 6px gap + half of
     // the time text's line height).
-    let row_cy = cy + 31.0;
-    let slider_width = (region.width() - 120.0).clamp(120.0, 620.0);
+    let row_cy = cy + metrics.disc / 2.0 + 13.0 * s;
+    let slider_width = (region.width() - 120.0 * s).clamp(120.0, 620.0 * s.max(1.0));
     let (position, duration) = now
         .map(|now| (now.position_ms, now.duration_ms))
         .unwrap_or((0, 0));
@@ -894,33 +1335,33 @@ fn transport(app: &mut App, ui: &mut egui::Ui, now: Option<&NowPlaying>, region:
     };
     let slider_left = region.center().x - slider_width / 2.0;
     ui.painter().text(
-        pos2(slider_left - 8.0, row_cy),
+        pos2(slider_left - 8.0 * s, row_cy),
         egui::Align2::RIGHT_CENTER,
         util::format_duration_ms(shown_position),
-        theme::regular(11.5),
+        theme::regular(metrics.time),
         time_color,
     );
-    let slider_rect =
-        Rect::from_center_size(pos2(region.center().x, row_cy), vec2(slider_width, 16.0));
-    let mut slider_ui = ui.new_child(
-        UiBuilder::new()
-            .max_rect(slider_rect)
-            .layout(Layout::left_to_right(Align::Center)),
+    let slider_rect = Rect::from_center_size(
+        pos2(region.center().x, row_cy),
+        vec2(slider_width, 16.0 * s.max(1.0)),
     );
     let fraction = if duration > 0 {
         position as f32 / duration as f32
     } else {
         0.0
     };
-    match thin_slider(
-        &mut slider_ui,
+    match super::widgets::slider_at(
+        ui,
+        slider_rect,
         &palette,
         egui::Id::new("seek-slider"),
         &gettext(app.locale, "Playback position (%)"),
         fraction,
-        slider_width,
         None,
-    ) {
+        metrics.slider_look(),
+    )
+    .0
+    {
         SliderEvent::Dragging(value) => app.seek_preview = Some(value),
         SliderEvent::Committed(value) => {
             app.seek_preview = None;
@@ -932,27 +1373,27 @@ fn transport(app: &mut App, ui: &mut egui::Ui, now: Option<&NowPlaying>, region:
         SliderEvent::None => {}
     }
     ui.painter().text(
-        pos2(slider_left + slider_width + 8.0, row_cy),
+        pos2(slider_left + slider_width + 8.0 * s, row_cy),
         egui::Align2::LEFT_CENTER,
         util::format_duration_ms(duration),
-        theme::regular(11.5),
+        theme::regular(metrics.time),
         time_color,
     );
 }
 
-/// What the right of the bar always holds, in points: the volume slider and
-/// its button, the devices, queue and lyrics buttons, and the gaps.
-const EXTRAS_WIDTH: f32 = 92.0 + 4.0 * (18.0 + theme::ICON_BUTTON_PAD) + 4.0 * 6.0 + 4.0;
-
-/// Whether the full screen button has room beside the rest, keeping clear of
-/// the transport, with `room` points to the right of it.
-fn full_screen_button_fits(room: f32) -> bool {
-    room >= EXTRAS_WIDTH + 18.0 + theme::ICON_BUTTON_PAD + 6.0 + TRANSPORT_GAP
-}
-
-fn extras(app: &mut App, ui: &mut egui::Ui, now: Option<&NowPlaying>, transport_right: f32) {
+fn extras(
+    app: &mut App,
+    ui: &mut egui::Ui,
+    now: Option<&NowPlaying>,
+    transport_right: f32,
+    metrics: &Metrics,
+) {
     let palette = app.palette;
-    ui.spacing_mut().item_spacing.x = 6.0;
+    let (icon_size, pad) = (metrics.extra_icon, metrics.pad);
+    let button = |ui: &mut egui::Ui, icon: Icon, color: Color32, tip: &str| {
+        theme::icon_button_padded(ui, icon, icon_size, pad, color, palette.text, tip)
+    };
+    ui.spacing_mut().item_spacing.x = metrics.spacing;
     let volume = now
         .map(|now| now.volume_percent)
         .unwrap_or_else(|| crate::app::volume_to_percent(app.local.volume));
@@ -967,27 +1408,31 @@ fn extras(app: &mut App, ui: &mut egui::Ui, now: Option<&NowPlaying>, transport_
     // The bar's last control, right of the volume, like Spotify's. It gives
     // way before anything else, once Listening activity has; **F** stays.
     let room = ui.max_rect().right() - transport_right;
-    if full_screen_button_fits(room) {
+    if metrics.full_screen_button_fits(room) {
         let inside = app.lyrics_fullscreen.is_some();
         let (icon, tip) = if inside {
             (Icon::Shrink, gettext(app.locale, "Leave full screen (Esc)"))
         } else {
             (Icon::Expand, gettext(app.locale, "Full screen lyrics"))
         };
-        if theme::icon_button(ui, icon, 18.0, palette.secondary, palette.text, &tip).clicked() {
+        if button(ui, icon, palette.secondary, &tip).clicked() {
             app.actions.push(Action::SetLyricsFullscreen(!inside));
         }
     }
     let controls = ui.add_enabled_ui(adjustable, |ui| {
-        match thin_slider(
+        let (_, slider) = ui.allocate_space(vec2(metrics.volume, 16.0 * metrics.scale.max(1.0)));
+        match super::widgets::slider_at(
             ui,
+            slider,
             &palette,
             egui::Id::new("volume-slider"),
             &gettext(app.locale, "Volume (%)"),
             shown as f32 / 100.0,
-            92.0,
             Some(0.05),
-        ) {
+            metrics.slider_look(),
+        )
+        .0
+        {
             SliderEvent::Dragging(value) => {
                 app.volume_preview = Some(value);
                 app.actions
@@ -1006,12 +1451,10 @@ fn extras(app: &mut App, ui: &mut egui::Ui, now: Option<&NowPlaying>, transport_
             34..=66 => Icon::Volume1,
             _ => Icon::Volume2,
         };
-        if theme::icon_button(
+        if button(
             ui,
             volume_icon,
-            18.0,
             palette.secondary,
-            palette.text,
             &if shown == 0 {
                 gettext(app.locale, "Unmute")
             } else {
@@ -1034,23 +1477,21 @@ fn extras(app: &mut App, ui: &mut egui::Ui, now: Option<&NowPlaying>, transport_
             "This device's volume can't be changed from Spotifast",
         ));
     }
-    ui.add_space(4.0);
+    ui.add_space(4.0 * metrics.scale);
     let remote = now.is_some_and(|now| !now.local) && !app.targets_own_soloist();
     // Playing elsewhere, the button shows that device's own icon.
     let icon = now
         .filter(|_| remote)
         .and_then(|now| now.device_kind.as_deref())
         .map_or(Icon::Speaker, super::devices::device_icon);
-    let devices = theme::icon_button(
+    let devices = button(
         ui,
         icon,
-        18.0,
         if remote {
             palette.accent
         } else {
             palette.secondary
         },
-        palette.text,
         &gettext(app.locale, "Connect to a device"),
     );
     ui.ctx().data_mut(|data| {
@@ -1060,16 +1501,14 @@ fn extras(app: &mut App, ui: &mut egui::Ui, now: Option<&NowPlaying>, transport_
         app.actions.push(Action::ToggleDevicesPopup);
     }
     let queue_open = app.show_queue_panel || matches!(app.page(), Page::Queue);
-    let queue_button = theme::icon_button(
+    let queue_button = button(
         ui,
         Icon::ListVideo,
-        18.0,
         if queue_open {
             palette.accent
         } else {
             palette.secondary
         },
-        palette.text,
         &gettext(app.locale, "Queue"),
     );
     if queue_button.clicked() {
@@ -1086,16 +1525,14 @@ fn extras(app: &mut App, ui: &mut egui::Ui, now: Option<&NowPlaying>, transport_
                 .collect(),
         });
     }
-    if theme::icon_button(
+    if button(
         ui,
         Icon::Mic,
-        18.0,
         if app.show_lyrics_panel {
             palette.accent
         } else {
             palette.secondary
         },
-        palette.text,
         &gettext(app.locale, "Lyrics"),
     )
     .clicked()
@@ -1104,23 +1541,46 @@ fn extras(app: &mut App, ui: &mut egui::Ui, now: Option<&NowPlaying>, transport_
     }
     // The Listening activity button is the first to go in a narrow window,
     // so it never crowds the transport.
-    let left = ui.min_rect().left() - ui.spacing().item_spacing.x - (18.0 + theme::ICON_BUTTON_PAD);
-    if left - transport_right >= TRANSPORT_GAP
-        && theme::icon_button(
+    let left = ui.min_rect().left() - ui.spacing().item_spacing.x - metrics.extra_button();
+    if left - transport_right >= metrics.gap
+        && button(
             ui,
             Icon::Users,
-            18.0,
             if app.show_friends_panel {
                 palette.accent
             } else {
                 palette.secondary
             },
-            palette.text,
             &gettext(app.locale, "Listening activity"),
         )
         .clicked()
     {
         app.actions.push(Action::ToggleFriendsPanel);
+    }
+    // The compact bar has no times beside its progress line, so they sit
+    // here, where there is room for them.
+    if metrics.compact
+        && let Some(now) = now
+        && now.duration_ms > 0
+    {
+        let position = match app.seek_preview {
+            Some(fraction) => (fraction * now.duration_ms as f32) as u32,
+            None => now.position_ms,
+        };
+        let times = format!(
+            "{} / {}",
+            util::format_duration_ms(position),
+            util::format_duration_ms(now.duration_ms)
+        );
+        let galley =
+            ui.painter()
+                .layout_no_wrap(times, theme::regular(metrics.time), palette.secondary);
+        let left = ui.min_rect().left() - ui.spacing().item_spacing.x - galley.size().x - 6.0;
+        if left - transport_right >= metrics.gap {
+            ui.add_space(6.0);
+            let (rect, _) = ui.allocate_exact_size(galley.size(), Sense::hover());
+            ui.painter().galley(rect.min, galley, palette.secondary);
+        }
     }
 }
 
@@ -1309,7 +1769,45 @@ mod player_bar_tint_tests {
     /// A window too narrow for it loses the button, not the volume.
     #[test]
     fn the_full_screen_button_goes_when_the_bar_is_tight() {
-        assert!(full_screen_button_fits(320.0));
-        assert!(!full_screen_button_fits(200.0));
+        let bar = Metrics::full(theme::PLAYER_BAR_HEIGHT);
+        assert!(bar.full_screen_button_fits(320.0));
+        assert!(!bar.full_screen_button_fits(200.0));
+    }
+
+    /// The default bar keeps the sizes it always had.
+    #[test]
+    fn the_default_bar_keeps_its_sizes() {
+        let bar = Metrics::full(theme::PLAYER_BAR_HEIGHT);
+        assert_eq!(bar.scale, 1.0);
+        assert_eq!(bar.cover, 56.0);
+        assert_eq!(bar.disc, 36.0);
+        assert_eq!(bar.transport_widths(), [29.0, 30.0, 36.0, 30.0, 29.0]);
+        assert_eq!(bar.extras_width(), 240.0);
+        // Taller bars grow everything; shorter ones shrink it.
+        let tall = Metrics::full(theme::PLAYER_BAR_MAX_HEIGHT);
+        let short = Metrics::full(theme::PLAYER_BAR_MIN_HEIGHT);
+        assert!(tall.cover > bar.cover && tall.disc > bar.disc && tall.title > bar.title);
+        assert!(short.cover < bar.cover && short.disc < bar.disc && short.title < bar.title);
+        assert!(Metrics::compact().disc < short.disc);
+    }
+
+    /// Dragging down stops at the shortest full bar, does nothing for the
+    /// snap distance, then goes compact; dragging up out of compact takes as
+    /// far again.
+    #[test]
+    fn dragging_the_bar_snaps_to_compact_past_a_dead_zone() {
+        let min = theme::PLAYER_BAR_MIN_HEIGHT;
+        let snap = theme::PLAYER_BAR_SNAP;
+        assert_eq!(drag_to(false, 120.0), (false, 120.0));
+        assert_eq!(drag_to(false, 500.0), (false, theme::PLAYER_BAR_MAX_HEIGHT));
+        assert_eq!(drag_to(false, min - 1.0), (false, min));
+        assert_eq!(drag_to(false, min - snap + 1.0), (false, min));
+        assert!(drag_to(false, min - snap - 1.0).0);
+        let compact = theme::PLAYER_BAR_COMPACT_HEIGHT;
+        assert!(drag_to(true, compact + snap - 1.0).0);
+        assert_eq!(
+            drag_to(true, compact + snap + 1.0),
+            (false, min.max(compact + snap + 1.0))
+        );
     }
 }
