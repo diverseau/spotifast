@@ -688,8 +688,9 @@ package replaces it with this one; an edited template is left alone. Portable
 archives and Cargo builds do not install or upgrade the template: one copied
 in by hand keeps its shades until it is copied again.
 
-Apart from that upgrade, setup never replaces an existing template, hook or
-palette, and it never changes your selected theme. Other users are set up independently when they launch the
+Setup never replaces an existing palette or a template or hook you have
+edited, and it never changes your selected theme. An unedited template or hook
+it installed is upgraded when the package ships a new one. Other users are set up independently when they launch the
 app. Demo mode, portable archives and Cargo builds do not install the template
 or hook. A package uninstall removes the shared integration assets; your user
 configuration remains, like the rest of your preferences.
